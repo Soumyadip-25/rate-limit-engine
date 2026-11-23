@@ -19,7 +19,9 @@ const { redis, checkRedisHealth } = require('./config/redis');
 dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+const PORT = process.env.NODE_ENV === 'test'
+  ? (process.env.TEST_PORT ? parseInt(process.env.TEST_PORT, 10) : 0)
+  : (parseInt(process.env.PORT, 10) || 3000);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 /**

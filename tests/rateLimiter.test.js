@@ -16,6 +16,9 @@
  *   9. Environment Variable & Positive Integer Validation (Handles 0, negatives, strings)
  */
 
+// Set environment to test mode to bind to an available port without colliding with running containers
+process.env.NODE_ENV = 'test';
+
 const http = require('http');
 const { app, server } = require('../src/server');
 const { redis, checkRedisHealth } = require('../src/config/redis');
