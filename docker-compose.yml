@@ -1,0 +1,51 @@
+services:
+  # Redis service - In-memory key-value store used for Sliding Window Log
+  redis:
+    image: redis:7-alpine
+    container_name: rate-limit-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+    networks:
+      - rate-limit-net
+
+  # Express API backend application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rate-limit-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - RATE_LIMIT_MAX_REQUESTS=5
+      - RATE_LIMIT_WINDOW_SECONDS=60
+      - TRUST_PROXY=false
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - rate-limit-net
+
+networks:
+  rate-limit-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

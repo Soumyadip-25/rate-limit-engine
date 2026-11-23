@@ -1,0 +1,29 @@
+{
+  "name": "rate-limit-engine",
+  "version": "1.0.0",
+  "description": "Sliding Window Log Rate Limiting System using Node.js, Express, and Redis Sorted Sets",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "node tests/rateLimiter.test.js"
+  },
+  "keywords": [
+    "rate-limiter",
+    "sliding-window-log",
+    "redis",
+    "express",
+    "nodejs",
+    "ioredis"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

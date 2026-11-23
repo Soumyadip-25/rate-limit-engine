@@ -1,0 +1,73 @@
+{
+  "info": {
+    "_postman_id": "c1f79a9e-8df2-4217-a068-07e3e7f6e890",
+    "name": "Rate Limit Engine API",
+    "description": "Postman Collection for testing Sliding Window Log Rate Limiter built with Express and Redis Sorted Sets.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health Check (GET /)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "description": "Returns API health status and Redis connection state."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Protected Rate-Limited Endpoint (GET /api/test)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/test",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "test"
+          ]
+        },
+        "description": "Protected by Sliding Window Log rate limiter. Allows max 5 requests per 60 seconds per IP. Returns 429 after 5 requests."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Inspect Rate Limit Status (GET /api/status)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "status"
+          ]
+        },
+        "description": "Inspects current rate limit usage and remaining quota for calling IP without consuming a request slot."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ]
+}
