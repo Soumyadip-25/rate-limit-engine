@@ -123,11 +123,13 @@ const server = app.listen(PORT, () => {
 
 /**
  * Graceful Process Termination
- * Ensures in-flight HTTP connections complete and Redis disconnects cleanly.
+ * Ensures in-flight HTTP connections complete, idle connections are closed,
+ * and Redis disconnects cleanly without hanging.
  */
 function gracefulShutdown(signal) {
   console.log(`\n[Server] Received ${signal}. Initiating graceful shutdown...`);
 
+  // Stop accepting new connections
   server.close(async () => {
     console.log('[Server] HTTP server closed.');
 
@@ -141,14 +143,30 @@ function gracefulShutdown(signal) {
     process.exit(0);
   });
 
+  // Close idle keep-alive connections immediately (Node.js 18.2+)
+  if (typeof server.closeIdleConnections === 'function') {
+    server.closeIdleConnections();
+  }
+
   // Force exit if graceful shutdown takes longer than 5 seconds
   setTimeout(() => {
     console.error('[Server] Forced shutdown due to timeout.');
     process.exit(1);
-  }, 5000);
+  }, 5000).unref(); // unref() prevents the timeout from keeping the event loop alive
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Process-level error handling to prevent continuing in an unknown corrupted state
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught Exception thrown:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process] Unhandled Promise Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
+});
 
 module.exports = { app, server };

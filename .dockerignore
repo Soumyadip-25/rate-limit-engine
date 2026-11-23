@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment secrets and local files
+.env
+.env.local
+.env.*.local
+
+# Git version control
+.git/
+.gitignore
+
+# Docker configuration
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Test and verification artifacts
+tests/
+test_rate_limit.sh
+postman_collection.json
+
+# Logs and runtime data
+logs/
+*.log
+redis-data/
+
+# OS and Editor metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

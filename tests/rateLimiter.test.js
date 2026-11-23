@@ -5,17 +5,21 @@
  * ==============================================================================
  * 
  * Verifies:
- *   1. Root health endpoint connectivity (GET /)
- *   2. Sliding Window Log enforcement on GET /api/test (Allows 5, blocks 6th with 429)
- *   3. Rate Limit Headers (X-RateLimit-Limit, Remaining, Reset, Retry-After)
- *   4. Client IP Isolation (Different IPs maintain separate sliding windows)
+ *   1. Reliable asynchronous readiness probe (waits for Express & Redis without arbitrary sleep)
+ *   2. Root health endpoint connectivity (GET /)
+ *   3. Sliding Window Log enforcement on GET /api/test (Allows 5, blocks 6th with 429)
+ *   4. Rate Limit Headers (X-RateLimit-Limit, Remaining, Reset, Retry-After)
  *   5. Informational status endpoint (GET /api/status does not consume quota)
- *   6. Concurrency & Race Condition Prevention (Atomic Lua script under load)
+ *   6. Protection of /api/status endpoint (Relaxed rate limiter prevents DoS)
+ *   7. Client IP Isolation (Different IPs maintain separate sliding windows)
+ *   8. Concurrency & Race Condition Prevention (Atomic Lua script under load)
+ *   9. Environment Variable & Positive Integer Validation (Handles 0, negatives, strings)
  */
 
 const http = require('http');
 const { app, server } = require('../src/server');
-const { redis } = require('../src/config/redis');
+const { redis, checkRedisHealth } = require('../src/config/redis');
+const { parsePositiveInteger } = require('../src/middleware/rateLimiter');
 
 // Helper to make native HTTP requests to the running test server
 function makeRequest(path, options = {}) {
@@ -63,15 +67,53 @@ function assert(condition, message) {
   }
 }
 
+/**
+ * Reliable Readiness Probe:
+ * Eliminates flaky fixed timeouts (e.g. setTimeout(..., 500)) by actively waiting
+ * for both the Express HTTP server and Redis connection to be fully initialized.
+ */
+async function waitForReadiness(timeoutMs = 5000) {
+  const start = Date.now();
+
+  // 1. Wait for HTTP server to start listening
+  while (!server.listening) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`[ReadinessProbe] Express server failed to listen within ${timeoutMs}ms.`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  // 2. Wait for Redis connection to report 'ready'
+  while (redis.status !== 'ready') {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`[ReadinessProbe] Redis connection failed to become ready within ${timeoutMs}ms. Status: ${redis.status}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  // 3. Confirm Redis health via PING
+  const healthy = await checkRedisHealth(2000);
+  if (!healthy) {
+    throw new Error('[ReadinessProbe] Redis ping check failed during readiness verification.');
+  }
+
+  const elapsed = Date.now() - start;
+  console.log(`[ReadinessProbe] Server and Redis verified ready in ${elapsed}ms.\n`);
+}
+
 async function runTestSuite() {
-  console.log('\n======================================================');
+  console.log('======================================================');
   console.log(' Starting Rate Limiter Comprehensive Test Suite');
   console.log('======================================================\n');
 
   try {
-    // Ensure Redis is clean for test client IPs
+    // Await deterministic readiness before running any tests
+    await waitForReadiness(5000);
+
+    // Clean up test keys in Redis for isolated testing
     const testIp = '127.0.0.1';
     await redis.del(`ratelimit:${testIp}`);
+    await redis.del(`ratelimit:status:${testIp}`);
     await redis.del('ratelimit:192.168.1.50');
     await redis.del('ratelimit:192.168.1.51');
 
@@ -109,19 +151,36 @@ async function runTestSuite() {
     assert(blockedRes.body.error === 'Too Many Requests', 'JSON error message is "Too Many Requests"');
 
     // ------------------------------------------------------------------------
-    // TEST 4: Status Inspector (GET /api/status does not consume quota)
+    // TEST 4: Status Inspector (GET /api/status does not consume /api/test quota)
     // ------------------------------------------------------------------------
-    console.log('\n--- TEST 4: GET /api/status (Inspect Usage Without Consuming Quota) ---');
+    console.log('\n--- TEST 4: GET /api/status (Inspect Usage Without Consuming Test Quota) ---');
     const statusRes = await makeRequest('/api/status');
     assert(statusRes.statusCode === 200, 'Status endpoint returns HTTP 200');
-    assert(statusRes.body.data.currentUsage === 5, 'Status correctly reports currentUsage: 5');
-    assert(statusRes.body.data.remaining === 0, 'Status correctly reports remaining: 0');
+    assert(statusRes.body.data.currentUsage === 5, 'Status correctly reports test endpoint usage: 5');
+    assert(statusRes.body.data.remaining === 0, 'Status correctly reports test endpoint remaining: 0');
+    assert(statusRes.headers['x-ratelimit-limit'] === '30', 'Status endpoint response header reflects its own limit (30)');
 
     // ------------------------------------------------------------------------
-    // TEST 5: Separate Client IP Histories
+    // TEST 5: Status Endpoint Rate Limiting (Protected against DoS)
     // ------------------------------------------------------------------------
-    console.log('\n--- TEST 5: Client IP Isolation ---');
-    // We test a distinct IP directly against Redis and verify separate tracking
+    console.log('\n--- TEST 5: Protection of /api/status Endpoint ---');
+    // Pre-seed status limit key to simulate 30 requests already made
+    const statusKey = `ratelimit:status:${testIp}`;
+    const nowTs = Date.now();
+    for (let k = 0; k < 30; k++) {
+      await redis.zadd(statusKey, nowTs, `${nowTs}:${k}:status-test`);
+    }
+    await redis.expire(statusKey, 60);
+
+    const floodedStatusRes = await makeRequest('/api/status');
+    assert(floodedStatusRes.statusCode === 429, '31st request to /api/status is BLOCKED with HTTP 429');
+    assert(floodedStatusRes.headers['x-ratelimit-remaining'] === '0', 'Status response header Remaining is 0');
+    await redis.del(statusKey); // Clean up status test key
+
+    // ------------------------------------------------------------------------
+    // TEST 6: Separate Client IP Histories
+    // ------------------------------------------------------------------------
+    console.log('\n--- TEST 6: Client IP Isolation ---');
     const anotherIp = '10.0.0.99';
     await redis.del(`ratelimit:${anotherIp}`);
     const isolatedStatus = await redis.slidingWindowStatus(
@@ -134,13 +193,12 @@ async function runTestSuite() {
     assert(isolatedStatus[1] === 5, `IP ${anotherIp} has all 5 requests remaining`);
 
     // ------------------------------------------------------------------------
-    // TEST 6: Atomic Concurrency & Race Condition Prevention
+    // TEST 7: Atomic Concurrency & Race Condition Prevention
     // ------------------------------------------------------------------------
-    console.log('\n--- TEST 6: High Concurrency Test (Simultaneous Atomic Execution) ---');
+    console.log('\n--- TEST 7: High Concurrency Test (Simultaneous Atomic Execution) ---');
     const concurrentIp = '192.168.1.51';
     await redis.del(`ratelimit:${concurrentIp}`);
 
-    // Fire 10 simultaneous atomic requests for the same IP
     const now = Date.now();
     const concurrentPromises = [];
     for (let i = 0; i < 10; i++) {
@@ -170,8 +228,20 @@ async function runTestSuite() {
     );
     console.log('  -> Atomic Lua script prevented race conditions flawlessly!');
 
+    // ------------------------------------------------------------------------
+    // TEST 8: Environment Variable & Positive Integer Validation
+    // ------------------------------------------------------------------------
+    console.log('\n--- TEST 8: Configuration Parsing & Positive Integer Validation ---');
+    assert(parsePositiveInteger('10', 5, 'TEST_VAR') === 10, 'Valid positive integer string "10" parses to 10');
+    assert(parsePositiveInteger(undefined, 5, 'TEST_VAR') === 5, 'Undefined falls back to default 5');
+    assert(parsePositiveInteger('', 5, 'TEST_VAR') === 5, 'Empty string falls back to default 5');
+    assert(parsePositiveInteger('0', 5, 'TEST_VAR') === 5, 'Zero correctly falls back to default 5 (resolves falsy bug)');
+    assert(parsePositiveInteger('-10', 5, 'TEST_VAR') === 5, 'Negative integer falls back to default 5');
+    assert(parsePositiveInteger('invalid', 5, 'TEST_VAR') === 5, 'Non-numeric string falls back to default 5');
+    assert(parsePositiveInteger('3.14', 5, 'TEST_VAR') === 5, 'Float string falls back to default 5');
+
     console.log('\n======================================================');
-    console.log('  ALL TESTS PASSED SUCCESSFULLY! (6/6)');
+    console.log('  ALL TESTS PASSED SUCCESSFULLY! (8/8)');
     console.log('======================================================\n');
   } catch (error) {
     console.error('\nTest Suite Failed:', error);
@@ -183,5 +253,5 @@ async function runTestSuite() {
   }
 }
 
-// Give server and Redis a moment to establish connection before running
-setTimeout(runTestSuite, 500);
+// Start test suite immediately; internal readiness probe manages timing
+runTestSuite();

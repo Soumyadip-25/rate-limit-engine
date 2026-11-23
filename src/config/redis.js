@@ -131,10 +131,10 @@ const redis = new Redis({
   host: REDIS_HOST,
   port: REDIS_PORT,
   password: REDIS_PASSWORD,
-  // Automatic reconnection strategy with exponential backoff
+  // Automatic reconnection strategy with linear backoff (100ms per attempt, capped at 3000ms)
   retryStrategy(times) {
     const delay = Math.min(times * 100, 3000);
-    console.warn(`[Redis] Connection lost. Attempting reconnect #${times} in ${delay}ms...`);
+    console.warn(`[Redis] Connection lost. Attempting reconnect #${times} in ${delay}ms (linear backoff)...`);
     return delay;
   },
   maxRetriesPerRequest: 3,
@@ -188,11 +188,19 @@ function isRedisReady() {
 }
 
 /**
- * Graceful health check ping
+ * Graceful health check ping with timeout protection
+ * Prevents hanging indefinitely if Redis is unresponsive.
+ * 
+ * @param {number} timeoutMs Maximum time to wait for Redis PONG (default: 2000ms)
+ * @returns {Promise<boolean>}
  */
-async function checkRedisHealth() {
+async function checkRedisHealth(timeoutMs = 2000) {
   try {
-    const reply = await redis.ping();
+    const pingPromise = redis.ping();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Redis health check timed out')), timeoutMs)
+    );
+    const reply = await Promise.race([pingPromise, timeoutPromise]);
     return reply === 'PONG';
   } catch (err) {
     return false;

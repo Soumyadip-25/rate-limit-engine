@@ -5,21 +5,27 @@
  * ==============================================================================
  * 
  * Endpoints:
- *   GET /api/test   - Protected by rateLimiter. Returns 200 OK if allowed, 429 if blocked.
- *   GET /api/status - Returns rate limit metrics for the calling client without consuming a slot.
+ *   GET /api/test   - Protected by main rateLimiter (default: 5 requests / 60 seconds).
+ *   GET /api/status - Protected by statusRateLimiter (default: 30 requests / 60 seconds).
+ *                     Inspects client's current usage of /api/test without consuming a slot.
  */
 
 const express = require('express');
-const { rateLimiter, getClientIp, getRateLimitStatus } = require('../middleware/rateLimiter');
+const {
+  rateLimiter,
+  statusRateLimiter,
+  getClientIp,
+  getRateLimitStatus,
+} = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
 /**
  * GET /api/test
  * 
- * Protected endpoint. Every incoming request must pass through `rateLimiter`.
- * If allowed, responds with 200 OK and detailed remaining allowance.
- * If exceeded, `rateLimiter` responds with 429 Too Many Requests before reaching this handler.
+ * Protected by main rateLimiter.
+ * Allows requests within the configured sliding window limit (default: 5 req / 60s).
+ * Rejects requests exceeding the limit with HTTP 429 Too Many Requests.
  */
 router.get('/test', rateLimiter, (req, res) => {
   res.status(200).json({
@@ -39,19 +45,15 @@ router.get('/test', rateLimiter, (req, res) => {
 /**
  * GET /api/status
  * 
- * Informational endpoint. Inspects the client's current rate limit usage without
- * registering a new request or consuming any quota.
+ * Protected by statusRateLimiter (relaxed rate limiter: 30 req / 60s).
+ * Inspects the client's current rate limit usage for /api/test without
+ * consuming a slot in the main rate limiter, while preventing Redis DoS.
  */
-router.get('/status', async (req, res) => {
+router.get('/status', statusRateLimiter, async (req, res) => {
   const clientIp = getClientIp(req);
 
   try {
     const status = await getRateLimitStatus(clientIp);
-
-    // Provide informational rate limit headers
-    res.setHeader('X-RateLimit-Limit', status.limit);
-    res.setHeader('X-RateLimit-Remaining', status.remaining);
-    res.setHeader('X-RateLimit-Reset', status.resetTime);
 
     res.status(200).json({
       success: true,

@@ -100,6 +100,7 @@ rate-limit-engine/
 │   └── server.js              # Express app bootstrap, proxy config, error handlers, shutdown
 ├── tests/
 │   └── rateLimiter.test.js    # Comprehensive automated verification test suite
+├── test_rate_limit.sh         # Automated 10-request Bash rate limit test script
 ├── .env.example               # Template environment configuration
 ├── .env                       # Local environment variables
 ├── .gitignore                 # Git ignore rules
@@ -392,7 +393,35 @@ Expected Output:
 
 ---
 
-### Option B: Testing with Postman
+### Option B: Automated Bash Testing Script (test_rate_limit.sh)
+
+The repository provides an automated Bash script `test_rate_limit.sh` designed to test the rate-limiting functionality from Linux, macOS, WSL, or Git Bash on Windows.
+
+#### What it does:
+- Sends **10 consecutive HTTP GET requests** to `http://localhost:3000/api/test`.
+- Captures and separates the HTTP status code and response body for every request.
+- Displays `✓ REQUEST ALLOWED (HTTP 200 OK)` for allowed requests.
+- Displays `✗ REQUEST BLOCKED (HTTP 429 Too Many Requests)` for rate-limited requests.
+- Displays `! UNEXPECTED RESPONSE` for connection failures or unexpected status codes.
+- Outputs an execution summary at the end.
+
+#### How to execute:
+
+> **Important**: The backend server must be running before executing this test (`npm start`, `npm run dev`, or `docker-compose up`).
+
+```bash
+bash test_rate_limit.sh
+```
+
+#### Expected Result:
+When the rate limiter is configured with the default limit of **5 requests per 60 seconds**:
+- **Requests 1 through 5**: Return `HTTP 200 OK` (`REQUEST ALLOWED`), with `X-RateLimit-Remaining` counting down from 4 to 0.
+- **Requests 6 through 10**: Return `HTTP 429 Too Many Requests` (`REQUEST BLOCKED`) with error payload and `Retry-After` seconds.
+- **Summary**: Reports `Allowed (HTTP 200): 5` and `Blocked (HTTP 429): 5`.
+
+---
+
+### Option C: Testing with Postman
 
 1. Open **Postman**.
 2. Click **Import** (top left).
@@ -408,7 +437,7 @@ Expected Output:
 
 ---
 
-### Option C: Testing with cURL / PowerShell
+### Option D: Manual cURL / PowerShell Testing
 
 In bash or terminal:
 ```bash

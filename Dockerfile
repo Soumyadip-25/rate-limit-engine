@@ -7,8 +7,8 @@ WORKDIR /usr/src/app
 # Copy package manifests first for efficient Docker layer caching
 COPY package*.json ./
 
-# Install production and application dependencies
-RUN npm ci --only=production
+# Install production dependencies (using modern --omit=dev flag)
+RUN npm ci --omit=dev
 
 # Copy application source code and configuration files
 COPY . .
