@@ -101,6 +101,7 @@ rate-limit-engine/
 ├── tests/
 │   └── rateLimiter.test.js    # Comprehensive automated verification test suite
 ├── test_rate_limit.sh         # Automated 10-request Bash rate limit test script
+├── .dockerignore              # Docker build exclusion rules
 ├── .env.example               # Template environment configuration
 ├── .env                       # Local environment variables
 ├── .gitignore                 # Git ignore rules
@@ -318,7 +319,8 @@ Retry-After: 48
 
 ### 3. Rate Limit Status Inspector
 - **Route**: `GET /api/status`
-- **Description**: Inspects the calling client's current usage, remaining requests, and reset timer **without consuming quota**.
+- **Protection**: Protected by `statusRateLimiter` (default: 30 requests / 60 seconds) to prevent Redis DoS.
+- **Description**: Inspects the calling client's current usage, remaining requests, and reset timer for `/api/test` **without consuming a test slot**.
 - **Example Response (HTTP 200 OK)**:
 ```json
 {
@@ -372,22 +374,36 @@ Expected Output:
   ✅ PASSED: Retry-After seconds is greater than 0
   ✅ PASSED: JSON error message is "Too Many Requests"
 
---- TEST 4: GET /api/status (Inspect Usage Without Consuming Quota) ---
+--- TEST 4: GET /api/status (Inspect Usage Without Consuming Test Quota) ---
   ✅ PASSED: Status endpoint returns HTTP 200
-  ✅ PASSED: Status correctly reports currentUsage: 5
-  ✅ PASSED: Status correctly reports remaining: 0
+  ✅ PASSED: Status correctly reports test endpoint usage: 5
+  ✅ PASSED: Status correctly reports test endpoint remaining: 0
+  ✅ PASSED: Status endpoint response header reflects its own limit (30)
 
---- TEST 5: Client IP Isolation ---
+--- TEST 5: Protection of /api/status Endpoint ---
+  ✅ PASSED: 31st request to /api/status is BLOCKED with HTTP 429
+  ✅ PASSED: Status response header Remaining is 0
+
+--- TEST 6: Client IP Isolation ---
   ✅ PASSED: IP 10.0.0.99 has 0 usage while 127.0.0.1 is exhausted
   ✅ PASSED: IP 10.0.0.99 has all 5 requests remaining
 
---- TEST 6: High Concurrency Test (Simultaneous Atomic Execution) ---
+--- TEST 7: High Concurrency Test (Simultaneous Atomic Execution) ---
   ✅ PASSED: Exactly 5 concurrent requests were ALLOWED (Actual: 5)
   ✅ PASSED: Exactly 5 concurrent requests were BLOCKED (Actual: 5)
   -> Atomic Lua script prevented race conditions flawlessly!
 
+--- TEST 8: Configuration Parsing & Positive Integer Validation ---
+  ✅ PASSED: Valid positive integer string "10" parses to 10
+  ✅ PASSED: Undefined falls back to default 5
+  ✅ PASSED: Empty string falls back to default 5
+  ✅ PASSED: Zero correctly falls back to default 5 (resolves falsy bug)
+  ✅ PASSED: Negative integer falls back to default 5
+  ✅ PASSED: Non-numeric string falls back to default 5
+  ✅ PASSED: Float string falls back to default 5
+
 ======================================================
-  ALL TESTS PASSED SUCCESSFULLY! (6/6)
+  ALL TESTS PASSED SUCCESSFULLY! (8/8)
 ======================================================
 ```
 
